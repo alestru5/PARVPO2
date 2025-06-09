@@ -1,4 +1,4 @@
-// main.cpp
+// lab7_main.cpp
 #include <iostream>
 #include <vector>
 #include <cmath>
@@ -6,26 +6,34 @@
 #include <chrono>
 #include <fstream>
 
-#define NUM 50'000'000
-#define SEED 42
+#define КОЛ_УРАВНЕНИЙ 50'000'000
+#define ЗЕРНО_ГЕНЕРАТОРА 42
 
-using namespace std;
-using namespace chrono;
+using std::cout;
+using std::endl;
+using std::vector;
+using std::fabs;
+using std::mt19937;
+using std::uniform_real_distribution;
+using std::chrono::high_resolution_clock;
+using std::chrono::duration;
 
-struct EquationResult {
-    double a, b, c;
-    int num_roots;
-    double root1, root2;
+// Результат решения квадратного уравнения
+struct РезультатУравнения {
+    double коэф_a, коэф_b, коэф_c;
+    int число_корней;
+    double корень1, корень2;
 };
 
-int solve_quadratic(double a, double b, double c, double &x1, double &x2) {
-    double d = b * b - 4 * a * c;
-    if (d > 0) {
-        double sqrt_d = sqrt(d);
+// Решение квадратного уравнения: возвращает число корней и сами корни
+int решить_квадратное(double a, double b, double c, double &x1, double &x2) {
+    double дискриминант = b * b - 4 * a * c;
+    if (дискриминант > 0) {
+        double sqrt_d = sqrt(дискриминант);
         x1 = (-b + sqrt_d) / (2 * a);
         x2 = (-b - sqrt_d) / (2 * a);
         return 2;
-    } else if (d == 0) {
+    } else if (дискриминант == 0) {
         x1 = x2 = -b / (2 * a);
         return 1;
     } else {
@@ -35,22 +43,22 @@ int solve_quadratic(double a, double b, double c, double &x1, double &x2) {
 }
 
 int main() {
-    mt19937 rng(SEED);
-    uniform_real_distribution<double> dist(-1000.0, 1000.0);
-    vector<EquationResult> results;
-    results.reserve(NUM);
-    auto start = high_resolution_clock::now();
-    for (size_t i = 0; i < NUM; ++i) {
-        double a = dist(rng);
-        while (fabs(a) < 1e-6) a = dist(rng);
-        double b = dist(rng);
-        double c = dist(rng);
+    mt19937 генератор(ЗЕРНО_ГЕНЕРАТОРА);
+    uniform_real_distribution<double> распределение(-1000.0, 1000.0);
+    vector<РезультатУравнения> решения;
+    решения.reserve(КОЛ_УРАВНЕНИЙ);
+    auto время_старта = high_resolution_clock::now();
+    for (size_t i = 0; i < КОЛ_УРАВНЕНИЙ; ++i) {
+        double a = распределение(генератор);
+        while (fabs(a) < 1e-6) a = распределение(генератор);
+        double b = распределение(генератор);
+        double c = распределение(генератор);
         double x1, x2;
-        int num_roots = solve_quadratic(a, b, c, x1, x2);
-        results.push_back({a, b, c, num_roots, x1, x2});
+        int корней = решить_квадратное(a, b, c, x1, x2);
+        решения.push_back({a, b, c, корней, x1, x2});
     }
-    auto end = high_resolution_clock::now();
-    double elapsed = duration<double>(end - start).count();
-    cout << "Solved " << NUM << " equations in " << elapsed << " seconds." << endl;
+    auto время_конца = high_resolution_clock::now();
+    double сек_затрачено = duration<double>(время_конца - время_старта).count();
+    cout << "Решено " << КОЛ_УРАВНЕНИЙ << " уравнений за " << сек_затрачено << " секунд." << endl;
     return 0;
 }

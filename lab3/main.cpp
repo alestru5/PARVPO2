@@ -49,7 +49,7 @@ void measure_time(int k, std::ifstream& file_in, std::streamsize file_size) {
 }
 
 int main() {
-    const std::string filename = "/home/sagilyp/2025-03-22 10-33-05.mkv";
+    const std::string filename = "/home/alestru5/2025-03-22 10-33-05.mkv";
     std::ifstream file_in(filename, std::ios::binary | std::ios::ate);
     if (!file_in) {
         std::cerr << "Ошибка при открытии файла!" << std::endl;

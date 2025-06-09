@@ -1,18 +1,7 @@
 // ======================================================================
-// main.cpp
+// lab9_main.cpp
 //
-// Лабораторная работа №9: «Контракты с компилятором»
-// Исправлена проблема с объявлением двух переменных в заголовке for:
-//
-//    for (size_t i = 0, lb = (use_const_bound ? loop_bound_c : loop_bound_var); i < lb; ++i)
-//
-// теперь преобразовано в:
-//
-//    size_t lb = (use_const_bound ? loop_bound_c : loop_bound_var);
-//    for (size_t i = 0; i < lb; ++i)
-//
-// Сборка (пример для -O2 и OpenMP):
-//    g++ -std=c++17 -O2 -fopenmp main.cpp -o lab9_exp
+// Лабораторная работа №9: «Контракты с компилятором» (уникальный стиль)
 // ======================================================================
 
 #include <iostream>
@@ -26,277 +15,226 @@
   #include <omp.h>
 #endif
 
-using namespace std;
-using clk = chrono::high_resolution_clock;
+using std::cout;
+using std::endl;
+using std::vector;
+using std::string;
+using std::size_t;
+using std::mt19937_64;
+using std::uniform_real_distribution;
+using std::chrono::high_resolution_clock;
+using std::chrono::duration;
 
 // Общее число уравнений для эксперимента
-static constexpr size_t N = 50'000'000;
+static constexpr size_t ЧИСЛО_УРАВНЕНИЙ = 50'000'000;
 
 // ===================== Часть A. Решение N квадратных уравнений =============
 
-void experiment_quadratic()
+void эксперимент_квадратные()
 {
     cout << "=== Часть A: решение квадратных уравнений ===\n\n";
 
-    // 1) Генерация входных данных (одноразово, однопоточно) -------------------
-    vector<double> A(N), B(N), C(N);
+    // 1) Генерация входных данных
+    vector<double> коэф_A(ЧИСЛО_УРАВНЕНИЙ), коэф_B(ЧИСЛО_УРАВНЕНИЙ), коэф_C(ЧИСЛО_УРАВНЕНИЙ);
     {
-        mt19937_64 rng(42);
-        uniform_real_distribution<double> dist(-1000.0, 1000.0);
-        for (size_t i = 0; i < N; ++i) {
-            double a = dist(rng);
-            while (fabs(a) < 1e-9) {
-                a = dist(rng);
-            }
-            A[i] = a;
-            B[i] = dist(rng);
-            C[i] = dist(rng);
+        mt19937_64 генератор(42);
+        uniform_real_distribution<double> распр(-1000.0, 1000.0);
+        for (size_t i = 0; i < ЧИСЛО_УРАВНЕНИЙ; ++i) {
+            double a = распр(генератор);
+            while (fabs(a) < 1e-9) a = распр(генератор);
+            коэф_A[i] = a;
+            коэф_B[i] = распр(генератор);
+            коэф_C[i] = распр(генератор);
         }
     }
 
-    // 2) Перечисление «контрактов»
-    enum Mode { 
-        BASE = 0,      // все указатели «обычные»
-        CONST_ALL,     // входные указатели const double *
-        VOLATILE_ALL,  // входные указатели volatile double *
-        RESTRICT_ALL   // входные указатели double * __restrict__
+    enum Режим { 
+        ОБЫЧНЫЕ = 0,
+        КОНСТ_ВСЕ,
+        ВОЛАТ_ВСЕ,
+        РЕСТРИКТ_ВСЕ
     };
 
-    // 3) «Граница цикла»: две версии
-    size_t loop_bound_var   = N;       // «неявная» переменная
-    const size_t loop_bound_c = N;     // «явно константная»
+    size_t граница_цикла_перем = ЧИСЛО_УРАВНЕНИЙ;
+    const size_t граница_цикла_конст = ЧИСЛО_УРАВНЕНИЙ;
 
-    // 4) Лямбда, запускающая один вариант эксперимента
-    auto run_variant = [&]( const string &name,
-                            double *a_arr_raw,
-                            double *b_arr_raw,
-                            double *c_arr_raw,
-                            bool    use_const_bound,
-                            bool    with_openmp )
+    auto запуск_варианта = [&](const string &имя,
+                               double *a_сырые,
+                               double *b_сырые,
+                               double *c_сырые,
+                               bool    использовать_конст_границу,
+                               bool    omp_вкл)
     {
-        // 4.1. Определяем режим (mode) по строковому имени
-        Mode mode = BASE;
-        if      (name.rfind("BASELINE",    0) == 0) mode = BASE;
-        else if (name.rfind("CONST_ALL",   0) == 0) mode = CONST_ALL;
-        else if (name.rfind("VOLATILE_ALL",0) == 0) mode = VOLATILE_ALL;
-        else if (name.rfind("RESTRICT_ALL",0) == 0) mode = RESTRICT_ALL;
-        else {
-            assert(false && "run_variant: неизвестный режим");
+        Режим режим = ОБЫЧНЫЕ;
+        if      (имя.rfind("BASELINE",    0) == 0) режим = ОБЫЧНЫЕ;
+        else if (имя.rfind("CONST_ALL",   0) == 0) режим = КОНСТ_ВСЕ;
+        else if (имя.rfind("VOLATILE_ALL",0) == 0) режим = ВОЛАТ_ВСЕ;
+        else if (имя.rfind("RESTRICT_ALL",0) == 0) режим = РЕСТРИКТ_ВСЕ;
+        else assert(false && "Неизвестный режим!");
+
+        double *        a = nullptr;
+        double *        b = nullptr;
+        double *        c = nullptr;
+        const double *  a_c = nullptr;
+        const double *  b_c = nullptr;
+        const double *  c_c = nullptr;
+        volatile double *a_v = nullptr;
+        volatile double *b_v = nullptr;
+        volatile double *c_v = nullptr;
+        double * __restrict__ a_r = nullptr;
+        double * __restrict__ b_r = nullptr;
+        double * __restrict__ c_r = nullptr;
+
+        switch (режим) {
+            case ОБЫЧНЫЕ:
+                a = a_сырые; b = b_сырые; c = c_сырые; break;
+            case КОНСТ_ВСЕ:
+                a_c = a_сырые; b_c = b_сырые; c_c = c_сырые; break;
+            case ВОЛАТ_ВСЕ:
+                a_v = reinterpret_cast<volatile double*>(a_сырые);
+                b_v = reinterpret_cast<volatile double*>(b_сырые);
+                c_v = reinterpret_cast<volatile double*>(c_сырые); break;
+            case РЕСТРИКТ_ВСЕ:
+                a_r = a_сырые; b_r = b_сырые; c_r = c_сырые; break;
         }
 
-        // 4.2. Различные указатели в зависимости от режима
-        double *        a_arr      = nullptr;
-        double *        b_arr      = nullptr;
-        double *        c_arr      = nullptr;
-        const double *  a_arr_c    = nullptr;
-        const double *  b_arr_c    = nullptr;
-        const double *  c_arr_c    = nullptr;
-        volatile double *a_arr_v   = nullptr;
-        volatile double *b_arr_v   = nullptr;
-        volatile double *c_arr_v   = nullptr;
-        double * __restrict__ a_arr_r = nullptr;
-        double * __restrict__ b_arr_r = nullptr;
-        double * __restrict__ c_arr_r = nullptr;
+        size_t кол_корней = 0u;
+        auto t_start = high_resolution_clock::now();
 
-        switch (mode) {
-            case BASE:
-                a_arr = a_arr_raw;
-                b_arr = b_arr_raw;
-                c_arr = c_arr_raw;
-                break;
-            case CONST_ALL:
-                a_arr_c = a_arr_raw;
-                b_arr_c = b_arr_raw;
-                c_arr_c = c_arr_raw;
-                break;
-            case VOLATILE_ALL:
-                a_arr_v = reinterpret_cast<volatile double*>(a_arr_raw);
-                b_arr_v = reinterpret_cast<volatile double*>(b_arr_raw);
-                c_arr_v = reinterpret_cast<volatile double*>(c_arr_raw);
-                break;
-            case RESTRICT_ALL:
-                a_arr_r = a_arr_raw;
-                b_arr_r = b_arr_raw;
-                c_arr_r = c_arr_raw;
-                break;
-        }
-
-        // 4.3. Переменная для подсчёта «корней» (добавляем просто для того, 
-        // чтобы компилятор не «оптимизировал» цикл полностью)
-        size_t roots_count = 0u;
-        auto t_start = clk::now();
-
-        // 4.4. Если включён OpenMP — обёртка#pragma omp parallel for
-        if (with_openmp)
+        if (omp_вкл)
         {
             #ifdef _OPENMP
-              int max_thr = omp_get_max_threads();
+              int макс_потоков = omp_get_max_threads();
             #else
-              int max_thr = 1;
+              int макс_потоков = 1;
             #endif
 
-            if (mode == BASE) {
-                size_t lb = (use_const_bound ? loop_bound_c : loop_bound_var);
-                #pragma omp parallel for reduction(+:roots_count)
-                for (size_t i = 0; i < lb; ++i) {
-                    double a = a_arr[i];
-                    double b = b_arr[i];
-                    double c = c_arr[i];
+            size_t граница = (использовать_конст_границу ? граница_цикла_конст : граница_цикла_перем);
+            if (режим == ОБЫЧНЫЕ) {
+                #pragma omp parallel for reduction(+:кол_корней)
+                for (size_t i = 0; i < граница; ++i) {
+                    double a = a[i], b = b[i], c = c[i];
                     double D = b*b - 4.0*a*c;
                     if (D >= 0.0) {
                         double sd = sqrt(D);
                         double x1 = (-b + sd)/(2.0*a);
                         double x2 = (-b - sd)/(2.0*a);
                         (void)x1; (void)x2;
-                        roots_count += 2;
+                        кол_корней += 2;
                     }
                 }
-            }
-            else if (mode == CONST_ALL) {
-                size_t lb = (use_const_bound ? loop_bound_c : loop_bound_var);
-                #pragma omp parallel for reduction(+:roots_count)
-                for (size_t i = 0; i < lb; ++i) {
-                    double a = a_arr_c[i];
-                    double b = b_arr_c[i];
-                    double c = c_arr_c[i];
+            } else if (режим == КОНСТ_ВСЕ) {
+                #pragma omp parallel for reduction(+:кол_корней)
+                for (size_t i = 0; i < граница; ++i) {
+                    double a = a_c[i], b = b_c[i], c = c_c[i];
                     double D = b*b - 4.0*a*c;
                     if (D >= 0.0) {
                         double sd = sqrt(D);
                         double x1 = (-b + sd)/(2.0*a);
                         double x2 = (-b - sd)/(2.0*a);
                         (void)x1; (void)x2;
-                        roots_count += 2;
+                        кол_корней += 2;
                     }
                 }
-            }
-            else if (mode == VOLATILE_ALL) {
-                size_t lb = (use_const_bound ? loop_bound_c : loop_bound_var);
-                #pragma omp parallel for reduction(+:roots_count)
-                for (size_t i = 0; i < lb; ++i) {
-                    double a = a_arr_v[i];
-                    double b = b_arr_v[i];
-                    double c = c_arr_v[i];
+            } else if (режим == ВОЛАТ_ВСЕ) {
+                #pragma omp parallel for reduction(+:кол_корней)
+                for (size_t i = 0; i < граница; ++i) {
+                    double a = a_v[i], b = b_v[i], c = c_v[i];
                     double D = b*b - 4.0*a*c;
                     if (D >= 0.0) {
                         double sd = sqrt(D);
                         double x1 = (-b + sd)/(2.0*a);
                         double x2 = (-b - sd)/(2.0*a);
                         (void)x1; (void)x2;
-                        roots_count += 2;
+                        кол_корней += 2;
                     }
                 }
-            }
-            else if (mode == RESTRICT_ALL) {
-                size_t lb = (use_const_bound ? loop_bound_c : loop_bound_var);
-                #pragma omp parallel for reduction(+:roots_count)
-                for (size_t i = 0; i < lb; ++i) {
-                    double a = a_arr_r[i];
-                    double b = b_arr_r[i];
-                    double c = c_arr_r[i];
+            } else if (режим == РЕСТРИКТ_ВСЕ) {
+                #pragma omp parallel for reduction(+:кол_корней)
+                for (size_t i = 0; i < граница; ++i) {
+                    double a = a_r[i], b = b_r[i], c = c_r[i];
                     double D = b*b - 4.0*a*c;
                     if (D >= 0.0) {
                         double sd = sqrt(D);
                         double x1 = (-b + sd)/(2.0*a);
                         double x2 = (-b - sd)/(2.0*a);
                         (void)x1; (void)x2;
-                        roots_count += 2;
+                        кол_корней += 2;
                     }
                 }
             }
         }
         else
         {
-            // 4.5. Без OpenMP
-            if (mode == BASE) {
-                size_t lb = (use_const_bound ? loop_bound_c : loop_bound_var);
-                for (size_t i = 0; i < lb; ++i) {
-                    double a = a_arr[i];
-                    double b = b_arr[i];
-                    double c = c_arr[i];
+            size_t граница = (использовать_конст_границу ? граница_цикла_конст : граница_цикла_перем);
+            if (режим == ОБЫЧНЫЕ) {
+                for (size_t i = 0; i < граница; ++i) {
+                    double a = a[i], b = b[i], c = c[i];
                     double D = b*b - 4.0*a*c;
                     if (D >= 0.0) {
                         double sd = sqrt(D);
                         double x1 = (-b + sd)/(2.0*a);
                         double x2 = (-b - sd)/(2.0*a);
                         (void)x1; (void)x2;
-                        roots_count += 2;
+                        кол_корней += 2;
                     }
                 }
-            }
-            else if (mode == CONST_ALL) {
-                size_t lb = (use_const_bound ? loop_bound_c : loop_bound_var);
-                for (size_t i = 0; i < lb; ++i) {
-                    double a = a_arr_c[i];
-                    double b = b_arr_c[i];
-                    double c = c_arr_c[i];
+            } else if (режим == КОНСТ_ВСЕ) {
+                for (size_t i = 0; i < граница; ++i) {
+                    double a = a_c[i], b = b_c[i], c = c_c[i];
                     double D = b*b - 4.0*a*c;
                     if (D >= 0.0) {
                         double sd = sqrt(D);
                         double x1 = (-b + sd)/(2.0*a);
                         double x2 = (-b - sd)/(2.0*a);
                         (void)x1; (void)x2;
-                        roots_count += 2;
+                        кол_корней += 2;
                     }
                 }
-            }
-            else if (mode == VOLATILE_ALL) {
-                size_t lb = (use_const_bound ? loop_bound_c : loop_bound_var);
-                for (size_t i = 0; i < lb; ++i) {
-                    double a = a_arr_v[i];
-                    double b = b_arr_v[i];
-                    double c = c_arr_v[i];
+            } else if (режим == ВОЛАТ_ВСЕ) {
+                for (size_t i = 0; i < граница; ++i) {
+                    double a = a_v[i], b = b_v[i], c = c_v[i];
                     double D = b*b - 4.0*a*c;
                     if (D >= 0.0) {
                         double sd = sqrt(D);
                         double x1 = (-b + sd)/(2.0*a);
                         double x2 = (-b - sd)/(2.0*a);
                         (void)x1; (void)x2;
-                        roots_count += 2;
+                        кол_корней += 2;
                     }
                 }
-            }
-            else if (mode == RESTRICT_ALL) {
-                size_t lb = (use_const_bound ? loop_bound_c : loop_bound_var);
-                for (size_t i = 0; i < lb; ++i) {
-                    double a = a_arr_r[i];
-                    double b = b_arr_r[i];
-                    double c = c_arr_r[i];
+            } else if (режим == РЕСТРИКТ_ВСЕ) {
+                for (size_t i = 0; i < граница; ++i) {
+                    double a = a_r[i], b = b_r[i], c = c_r[i];
                     double D = b*b - 4.0*a*c;
                     if (D >= 0.0) {
                         double sd = sqrt(D);
                         double x1 = (-b + sd)/(2.0*a);
                         double x2 = (-b - sd)/(2.0*a);
                         (void)x1; (void)x2;
-                        roots_count += 2;
+                        кол_корней += 2;
                     }
                 }
             }
         }
 
-        auto t_end = clk::now();
-        double elapsed = chrono::duration<double>(t_end - t_start).count();
+        auto t_end = high_resolution_clock::now();
+        double затрачено = duration<double>(t_end - t_start).count();
 
-        // 4.6. Вывод результата:
-        cout << "Variant: " << name
-             << " | bound=" << (use_const_bound ? "const" : "var")
-             << " | OpenMP=" << (with_openmp ? "ON" : "OFF")
-             << " | Time=" << elapsed << " s"
-             << " | Roots=" << roots_count
+        cout << "Вариант: " << имя
+             << " | граница=" << (использовать_конст_границу ? "const" : "var")
+             << " | OpenMP=" << (omp_вкл ? "ON" : "OFF")
+             << " | Время=" << затрачено << " с"
+             << " | Корней=" << кол_корней
              << "\n";
     };
 
-    // 5) Перечисляем все 16 комбинаций и запускаем
-    vector<string> contracts = { "BASELINE", "CONST_ALL", "VOLATILE_ALL", "RESTRICT_ALL" };
-    for (const auto &ct : contracts) {
-        for (bool use_c : { false, true }) {     // false = var-bound, true = const-bound
-            for (bool omp_on : { false, true }) { // false = без OpenMP, true = с OpenMP
-                string name = ct + (omp_on ? "_OMP" : "_NOOMP");
-                run_variant(name,
-                            A.data(),
-                            B.data(),
-                            C.data(),
-                            use_c,
-                            omp_on);
+    vector<string> режимы = { "BASELINE", "CONST_ALL", "VOLATILE_ALL", "RESTRICT_ALL" };
+    for (const auto &реж : режимы) {
+        for (bool use_c : { false, true }) {
+            for (bool omp_on : { false, true }) {
+                string имя = реж + (omp_on ? "_OMP" : "_NOOMP");
+                запуск_варианта(имя, коэф_A.data(), коэф_B.data(), коэф_C.data(), use_c, omp_on);
             }
         }
     }
@@ -304,43 +242,43 @@ void experiment_quadratic()
 
 // ===================== Часть B. «Бесполезная сумма» =========================
 
-void experiment_useless_sum()
+void эксперимент_бесполезная_сумма()
 {
     cout << "\n=== Часть B: бесполезная сумма (volatile vs non-volatile) ===\n\n";
 
-    static constexpr size_t M = 200'000'000;
-    double *arr = new double[M];
-    for (size_t i = 0; i < M; ++i) {
-        arr[i] = 1.0;
+    static constexpr size_t М = 200'000'000;
+    double *массив = new double[М];
+    for (size_t i = 0; i < М; ++i) {
+        массив[i] = 1.0;
     }
 
-    // 1) «Не volatile»:
+    // 1) Не volatile
     {
-        double sum = 0.0;
-        auto t0 = clk::now();
-        for (size_t i = 0; i < M; ++i) {
-            sum += arr[i];
+        double сумма = 0.0;
+        auto t0 = high_resolution_clock::now();
+        for (size_t i = 0; i < М; ++i) {
+            сумма += массив[i];
         }
-        auto t1 = clk::now();
-        double t = chrono::duration<double>(t1 - t0).count();
-        cout << "Sum (non-volatile):\t time = " << t << " s"
-             << " | sum_snapshot = " << sum << "\n";
+        auto t1 = high_resolution_clock::now();
+        double t = duration<double>(t1 - t0).count();
+        cout << "Сумма (non-volatile):\t время = " << t << " с"
+             << " | снимок = " << сумма << "\n";
     }
 
-    // 2) «С volatile»:
+    // 2) С volatile
     {
-        volatile double sum2 = 0.0;
-        auto t0 = clk::now();
-        for (size_t i = 0; i < M; ++i) {
-            sum2 += arr[i];
+        volatile double сумма2 = 0.0;
+        auto t0 = high_resolution_clock::now();
+        for (size_t i = 0; i < М; ++i) {
+            сумма2 += массив[i];
         }
-        auto t1 = clk::now();
-        double t = chrono::duration<double>(t1 - t0).count();
-        cout << "Sum (volatile):\t time = " << t << " s"
-             << " | sum_snapshot = " << sum2 << "\n";
+        auto t1 = high_resolution_clock::now();
+        double t = duration<double>(t1 - t0).count();
+        cout << "Сумма (volatile):\t время = " << t << " с"
+             << " | снимок = " << сумма2 << "\n";
     }
 
-    delete [] arr;
+    delete [] массив;
 }
 
 // ======================================================================
@@ -349,14 +287,14 @@ void experiment_useless_sum()
 
 int main()
 {
-    cout << "\nЛабораторная №9: контракты с компилятором (с OpenMP)\n";
+    cout << "\nЛабораторная №9: контракты с компилятором (OpenMP)\n";
     cout << "====================================================\n\n";
 
-    // Часть A: огромное число квадратных уравнений
-    experiment_quadratic();
+    // Часть A: квадратные уравнения
+    эксперимент_квадратные();
 
-    // Часть B: «бесполезная сумма»
-    experiment_useless_sum();
+    // Часть B: бесполезная сумма
+    эксперимент_бесполезная_сумма();
 
     return 0;
 }

@@ -5,126 +5,133 @@
 #include <cstdlib>
 
 #if (defined(__GNUC__) && (__GNUC__ >= 3)) || (defined(__INTEL_COMPILER)) || defined(__clang__)
-    #define likely(expr)   (__builtin_expect(static_cast<bool>(expr), true))
-    #define unlikely(expr) (__builtin_expect(static_cast<bool>(expr), false))
+    #define вероятно(expr)   (__builtin_expect(static_cast<bool>(expr), true))
+    #define маловероятно(expr) (__builtin_expect(static_cast<bool>(expr), false))
 #else
-    #define likely(expr)   (expr)
-    #define unlikely(expr) (expr)
+    #define вероятно(expr)   (expr)
+    #define маловероятно(expr) (expr)
 #endif
 
-using namespace std;
-using namespace std::chrono;
+using std::cout;
+using std::endl;
+using std::vector;
+using std::size_t;
+using std::mt19937_64;
+using std::uniform_int_distribution;
+using std::chrono::high_resolution_clock;
+using std::chrono::duration;
 
-static const size_t N = 500'000'000;
-static const int REPEATS = 3;
+static const size_t РАЗМЕР_МАССИВА = 500'000'000;
+static const int ПОВТОРОВ = 3;
 
-
-void fill_array(vector<int>& a) {
-    std::mt19937_64 rng(42);
-    std::uniform_int_distribution<int> dist(1, 1000);
-    for (size_t i = 0; i < a.size(); ++i) {
-        a[i] = dist(rng);
+// Заполнение массива случайными числами
+void заполнить_массив(vector<int>& массив) {
+    mt19937_64 генератор(42);
+    uniform_int_distribution<int> распр(1, 1000);
+    for (size_t i = 0; i < массив.size(); ++i) {
+        массив[i] = распр(генератор);
     }
 }
 
-
-void baseline_sum(const vector<int>& a, long long& sum_many, long long& sum_rare) {
-    sum_many = 0;
-    sum_rare = 0;
-    for (size_t i = 0; i < a.size(); ++i) {
+// Базовая сумма без подсказок
+void базовая_сумма(const vector<int>& массив, long long& часто, long long& редко) {
+    часто = 0;
+    редко = 0;
+    for (size_t i = 0; i < массив.size(); ++i) {
         if (i % 1000 == 0) {
-            sum_rare += a[i];
+            редко += массив[i];
         } else {
-            sum_many += a[i];
+            часто += массив[i];
         }
     }
 }
 
-void correct_hint_sum(const vector<int>& a, long long& sum_many, long long& sum_rare) {
-    sum_many = 0;
-    sum_rare = 0;
-    for (size_t i = 0; i < a.size(); ++i) {
-        if (unlikely(i % 1000 == 0)) {
-            sum_rare += a[i];
+// Сумма с правильной подсказкой (маловероятно)
+void верная_подсказка(const vector<int>& массив, long long& часто, long long& редко) {
+    часто = 0;
+    редко = 0;
+    for (size_t i = 0; i < массив.size(); ++i) {
+        if (маловероятно(i % 1000 == 0)) {
+            редко += массив[i];
         } else {
-            sum_many += a[i];
+            часто += массив[i];
         }
     }
 }
 
-
-void wrong_hint_sum(const vector<int>& a, long long& sum_many, long long& sum_rare) {
-    sum_many = 0;
-    sum_rare = 0;
-    for (size_t i = 0; i < a.size(); ++i) {
-        if (likely(i % 1000 == 0)) {
-            sum_rare += a[i];
+// Сумма с неправильной подсказкой (вероятно)
+void неверная_подсказка(const vector<int>& массив, long long& часто, long long& редко) {
+    часто = 0;
+    редко = 0;
+    for (size_t i = 0; i < массив.size(); ++i) {
+        if (вероятно(i % 1000 == 0)) {
+            редко += массив[i];
         } else {
-            sum_many += a[i];
+            часто += массив[i];
         }
     }
 }
 
-
-void inverted_hint_sum(const vector<int>& a, long long& sum_many, long long& sum_rare) {
-    sum_many = 0;
-    sum_rare = 0;
-    for (size_t i = 0; i < a.size(); ++i) {
-        if (!(unlikely(i % 1000 != 0))) {
-            sum_rare += a[i];
+// Сумма с инвертированной подсказкой
+void инверт_подсказка(const vector<int>& массив, long long& часто, long long& редко) {
+    часто = 0;
+    редко = 0;
+    for (size_t i = 0; i < массив.size(); ++i) {
+        if (!(маловероятно(i % 1000 != 0))) {
+            редко += массив[i];
         } else {
-            sum_many += a[i];
+            часто += массив[i];
         }
     }
 }
 
-
-template<typename Func>
-double measure_time(Func f, const vector<int>& a, long long& out_many, long long& out_rare) {
-    double total = 0.0;
+// Измерение времени выполнения функции
+template<typename Функция>
+double измерить_время(Функция f, const vector<int>& массив, long long& out_часто, long long& out_редко) {
+    double всего = 0.0;
     long long sm = 0, sr = 0;
-    for (int r = 0; r < REPEATS; ++r) {
-        auto start = high_resolution_clock::now();
-        f(a, sm, sr);
-        auto end = high_resolution_clock::now();
-        total += duration<double>(end - start).count();
+    for (int r = 0; r < ПОВТОРОВ; ++r) {
+        auto старт = high_resolution_clock::now();
+        f(массив, sm, sr);
+        auto конец = high_resolution_clock::now();
+        всего += duration<double>(конец - старт).count();
     }
-    out_many = sm;
-    out_rare = sr;
-    return total / REPEATS;
+    out_часто = sm;
+    out_редко = sr;
+    return всего / ПОВТОРОВ;
 }
-
 
 int main() {
-    ios::sync_with_stdio(false);
-    cin.tie(nullptr);
+    std::ios::sync_with_stdio(false);
+    std::cin.tie(nullptr);
     cout << "=======================================================\n\n";
-    vector<int> data(N);
-    fill_array(data);
-    cout << "Размер массива " << N << " элементов\n";
-    long long baseline_many = 0, baseline_rare = 0;
-    long long correct_many  = 0, correct_rare  = 0;
-    long long wrong_many    = 0, wrong_rare    = 0;
-    long long invert_many   = 0, invert_rare   = 0;
+    vector<int> данные(РАЗМЕР_МАССИВА);
+    заполнить_массив(данные);
+    cout << "Размер массива " << РАЗМЕР_МАССИВА << " элементов\n";
+    long long баз_часто = 0, баз_редко = 0;
+    long long верн_часто  = 0, верн_редко  = 0;
+    long long неверн_часто    = 0, неверн_редко    = 0;
+    long long инверт_часто   = 0, инверт_редко   = 0;
 
-    double t_baseline = measure_time(baseline_sum,       data, baseline_many, baseline_rare);
-    double t_correct  = measure_time(correct_hint_sum,  data, correct_many,  correct_rare);
-    double t_wrong    = measure_time(wrong_hint_sum,    data, wrong_many,    wrong_rare);
-    double t_invert   = measure_time(inverted_hint_sum, data, invert_many,   invert_rare);
+    double t_base = измерить_время(базовая_сумма,       данные, баз_часто, баз_редко);
+    double t_true  = измерить_время(верная_подсказка,  данные, верн_часто,  верн_редко);
+    double t_false    = измерить_время(неверная_подсказка,    данные, неверн_часто,    неверн_редко);
+    double t_inv   = измерить_время(инверт_подсказка, данные, инверт_часто,   инверт_редко);
 
-    cout << "=== Результаты (усреднённое время из " << REPEATS << " запусков) ===\n\n";
-    cout << "1) Baseline (без подсказок):\n";
-    cout << "   Time = " << t_baseline << " с,  sum_many = " << baseline_many
-         << ", sum_rare = " << baseline_rare << "\n\n";
-    cout << "2) Верная подсказка (unlikely(i%1000==0)):\n";
-    cout << "   Time = " << t_correct << " с,  sum_many = " << correct_many
-         << ", sum_rare = " << correct_rare << "\n\n";
-    cout << "3) Неверная подсказка (likely(i%1000==0)):\n";
-    cout << "   Time = " << t_wrong << " с,  sum_many = " << wrong_many
-         << ", sum_rare = " << wrong_rare << "\n\n";
-    cout << "4) Инвертированная «перевернутая» подсказка:\n";
-    cout << "   Time = " << t_invert << " с,  sum_many = " << invert_many
-         << ", sum_rare = " << invert_rare << "\n\n";
+    cout << "=== Результаты (усреднённое время из " << ПОВТОРОВ << " запусков) ===\n\n";
+    cout << "1) Базовый вариант (без подсказок):\n";
+    cout << "   Время = " << t_base << " с,  часто = " << баз_часто
+         << ", редко = " << баз_редко << "\n\n";
+    cout << "2) Верная подсказка (маловероятно(i%1000==0)):\n";
+    cout << "   Время = " << t_true << " с,  часто = " << верн_часто
+         << ", редко = " << верн_редко << "\n\n";
+    cout << "3) Неверная подсказка (вероятно(i%1000==0)):\n";
+    cout << "   Время = " << t_false << " с,  часто = " << неверн_часто
+         << ", редко = " << неверн_редко << "\n\n";
+    cout << "4) Инвертированная подсказка:\n";
+    cout << "   Время = " << t_inv << " с,  часто = " << инверт_часто
+         << ", редко = " << инверт_редко << "\n\n";
     cout << "=======================================================\n";
     return 0;
 }
+
